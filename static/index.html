@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1">
+
+    <title>Body Measurement</title>
+
+    <style>
+        body {
+            font-family: Arial;
+            text-align: center;
+        }
+
+        video {
+            width: 95%;
+            max-width: 600px;
+        }
+
+        #results {
+            font-size: 20px;
+            margin-top: 15px;
+        }
+    </style>
+
+</head>
+
+<body>
+
+    <h2>Body Measurement</h2>
+
+    <video id="camera"
+           autoplay
+           playsinline></video>
+
+    <div id="results">
+        Waiting for camera...
+    </div>
+
+    <script src="/static/app.js"></script>
+
+</body>
+</html>
