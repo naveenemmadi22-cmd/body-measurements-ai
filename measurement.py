@@ -5,7 +5,7 @@ import os
 
 
 # =========================================================
-# HELPER FUNCTION
+# HELPER
 # =========================================================
 
 def distance(p1, p2):
@@ -16,7 +16,7 @@ def distance(p1, p2):
 
 
 # =========================================================
-# MEDIAPIPE POSE
+# MEDIAPIPE
 # =========================================================
 
 BaseOptions = mp.tasks.BaseOptions
@@ -30,6 +30,7 @@ MODEL_PATH = os.path.join(
     "pose_landmarker_full.task"
 )
 
+
 options = PoseLandmarkerOptions(
     base_options=BaseOptions(
         model_asset_path=MODEL_PATH
@@ -39,24 +40,112 @@ options = PoseLandmarkerOptions(
 )
 
 
-landmarker = PoseLandmarker.create_from_options(options)
+landmarker = PoseLandmarker.create_from_options(
+    options
+)
 
 
 # =========================================================
-# MAIN BODY MEASUREMENT FUNCTION
+# CALIBRATION
 # =========================================================
 
-def measure_body(frame):
+CALIBRATION_LENGTH_CM = 25.0
+
+
+def calculate_calibration(point1, point2):
+
+    pixel_length = distance(
+        point1,
+        point2
+    )
+
+    if pixel_length <= 0:
+        return None
+
+    cm_per_pixel = (
+        CALIBRATION_LENGTH_CM /
+        pixel_length
+    )
+
+    return {
+
+        "pixel_length":
+            round(pixel_length, 2),
+
+        "real_length_cm":
+            CALIBRATION_LENGTH_CM,
+
+        "cm_per_pixel":
+            cm_per_pixel
+    }
+
+
+# =========================================================
+# LANDMARK → IMAGE PIXEL
+# =========================================================
+
+def landmark_to_pixel(
+    landmark,
+    width,
+    height
+):
+
+    return (
+        int(landmark.x * width),
+        int(landmark.y * height)
+    )
+
+
+# =========================================================
+# CHECK VISIBILITY
+# =========================================================
+
+def visible(landmark, threshold=0.60):
+
+    return (
+        landmark.visibility is not None
+        and landmark.visibility >= threshold
+    )
+
+
+# =========================================================
+# BODY MEASUREMENT
+# =========================================================
+
+def measure_body(
+    frame,
+    cm_per_pixel
+):
 
     # -----------------------------------------------------
-    # Frame dimensions
+    # Calibration check
+    # -----------------------------------------------------
+
+    if (
+        cm_per_pixel is None
+        or cm_per_pixel <= 0
+    ):
+
+        return {
+
+            "height_cm": None,
+            "shoulder_cm": None,
+            "hip_cm": None,
+
+            "status":
+                "Calibration required"
+        }
+
+
+    # -----------------------------------------------------
+    # Image dimensions
     # -----------------------------------------------------
 
     height, width, _ = frame.shape
 
 
     # -----------------------------------------------------
-    # OpenCV BGR → RGB
+    # BGR → RGB
     # -----------------------------------------------------
 
     rgb_frame = cv2.cvtColor(
@@ -66,7 +155,7 @@ def measure_body(frame):
 
 
     # -----------------------------------------------------
-    # Create MediaPipe image
+    # MediaPipe image
     # -----------------------------------------------------
 
     mp_image = mp.Image(
@@ -76,198 +165,378 @@ def measure_body(frame):
 
 
     # -----------------------------------------------------
-    # Detect pose
+    # Pose detection
     # -----------------------------------------------------
 
-    results = landmarker.detect(mp_image)
+    results = landmarker.detect(
+        mp_image
+    )
 
-
-    # -----------------------------------------------------
-    # No person detected
-    # -----------------------------------------------------
 
     if not results.pose_landmarks:
 
         return {
-            "height": None,
-            "shoulder": None,
-            "waist": None,
-            "status": "No person detected"
+
+            "height_cm": None,
+            "shoulder_cm": None,
+            "hip_cm": None,
+
+            "status":
+                "No person detected"
         }
 
-
-    # -----------------------------------------------------
-    # Get first detected person
-    # -----------------------------------------------------
 
     landmarks = results.pose_landmarks[0]
 
 
     # =====================================================
-    # SHOULDERS
+    # LANDMARKS
     # =====================================================
+
+    nose = landmarks[0]
 
     left_shoulder = landmarks[11]
     right_shoulder = landmarks[12]
 
-    ls = (
-        int(left_shoulder.x * width),
-        int(left_shoulder.y * height)
-    )
-
-    rs = (
-        int(right_shoulder.x * width),
-        int(right_shoulder.y * height)
-    )
-
-    shoulder_pixels = distance(
-        ls,
-        rs
-    )
-
-
-    # =====================================================
-    # HIPS
-    # =====================================================
-
     left_hip = landmarks[23]
     right_hip = landmarks[24]
 
-    lh = (
-        int(left_hip.x * width),
-        int(left_hip.y * height)
-    )
-
-    rh = (
-        int(right_hip.x * width),
-        int(right_hip.y * height)
-    )
-
-    hip_pixels = distance(
-        lh,
-        rh
-    )
-
-
-    # =====================================================
-    # ANKLES
-    # =====================================================
+    left_knee = landmarks[25]
+    right_knee = landmarks[26]
 
     left_ankle = landmarks[27]
     right_ankle = landmarks[28]
 
-    la = (
-        int(left_ankle.x * width),
-        int(left_ankle.y * height)
-    )
+    left_heel = landmarks[29]
+    right_heel = landmarks[30]
 
-    ra = (
-        int(right_ankle.x * width),
-        int(right_ankle.y * height)
-    )
+    left_foot = landmarks[31]
+    right_foot = landmarks[32]
 
 
     # =====================================================
-    # TOP OF HEAD
+    # SHOULDER WIDTH
     # =====================================================
 
-    # MediaPipe does not provide an actual crown landmark.
-    # We estimate the top of the head using both ears.
+    shoulder_cm = None
 
+    if (
+        visible(left_shoulder)
+        and
+        visible(right_shoulder)
+    ):
+
+        ls = landmark_to_pixel(
+            left_shoulder,
+            width,
+            height
+        )
+
+        rs = landmark_to_pixel(
+            right_shoulder,
+            width,
+            height
+        )
+
+        shoulder_pixels = distance(
+            ls,
+            rs
+        )
+
+        shoulder_cm = (
+            shoulder_pixels *
+            cm_per_pixel
+        )
+
+
+    # =====================================================
+    # HIP WIDTH
+    # =====================================================
+
+    hip_cm = None
+
+    if (
+        visible(left_hip)
+        and
+        visible(right_hip)
+    ):
+
+        lh = landmark_to_pixel(
+            left_hip,
+            width,
+            height
+        )
+
+        rh = landmark_to_pixel(
+            right_hip,
+            width,
+            height
+        )
+
+        hip_pixels = distance(
+            lh,
+            rh
+        )
+
+        hip_cm = (
+            hip_pixels *
+            cm_per_pixel
+        )
+
+
+    # =====================================================
+    # HEIGHT
+    # =====================================================
+    #
+    # IMPORTANT:
+    #
+    # MediaPipe has no actual "top of head"
+    # landmark.
+    #
+    # We therefore estimate the top using
+    # visible facial landmarks.
+    #
+    # The bottom uses the lowest reliable
+    # foot/heel landmark.
+    # =====================================================
+
+
+    # -----------------------------------------------------
+    # Find visible upper-body landmarks
+    # -----------------------------------------------------
+
+    upper_points = []
+
+
+    # Nose
+    if visible(nose):
+
+        upper_points.append(
+            landmark_to_pixel(
+                nose,
+                width,
+                height
+            )
+        )
+
+
+    # Ears
     left_ear = landmarks[7]
     right_ear = landmarks[8]
 
-    le = (
-        int(left_ear.x * width),
-        int(left_ear.y * height)
-    )
 
-    re = (
-        int(right_ear.x * width),
-        int(right_ear.y * height)
-    )
+    if visible(left_ear):
 
-
-    # Middle of ears
-
-    head_center_x = int(
-        (le[0] + re[0]) / 2
-    )
+        upper_points.append(
+            landmark_to_pixel(
+                left_ear,
+                width,
+                height
+            )
+        )
 
 
-    ear_y = int(
-        (le[1] + re[1]) / 2
-    )
+    if visible(right_ear):
+
+        upper_points.append(
+            landmark_to_pixel(
+                right_ear,
+                width,
+                height
+            )
+        )
 
 
-    # Distance between ears
+    # -----------------------------------------------------
+    # Estimate top of head
+    # -----------------------------------------------------
 
-    ear_width = distance(
-        le,
-        re
-    )
-
-
-    # Estimate crown
-
-    crown_y = int(
-        ear_y - (ear_width * 0.75)
-    )
+    top_of_head = None
 
 
-    top_of_head = (
-        head_center_x,
-        crown_y
-    )
+    if len(upper_points) >= 2:
+
+        # Use the highest facial landmark
+        # as the reference point.
+
+        highest_y = min(
+            point[1]
+            for point in upper_points
+        )
+
+
+        # Estimate head crown above
+        # the highest facial landmark.
+
+        face_width = None
+
+
+        if (
+            visible(left_ear)
+            and
+            visible(right_ear)
+        ):
+
+            le = landmark_to_pixel(
+                left_ear,
+                width,
+                height
+            )
+
+            re = landmark_to_pixel(
+                right_ear,
+                width,
+                height
+            )
+
+            face_width = distance(
+                le,
+                re
+            )
+
+
+        if face_width is not None:
+
+            # Approximate crown offset.
+            #
+            # This is still an estimate because
+            # MediaPipe Pose does not provide a
+            # crown landmark.
+
+            crown_offset = (
+                face_width * 0.65
+            )
+
+            top_of_head = (
+                int(
+                    (
+                        upper_points[0][0]
+                        +
+                        upper_points[-1][0]
+                    ) / 2
+                ),
+                int(
+                    highest_y -
+                    crown_offset
+                )
+            )
+
+        else:
+
+            top_of_head = min(
+                upper_points,
+                key=lambda p: p[1]
+            )
 
 
     # =====================================================
-    # BOTTOM OF BODY
+    # FIND BOTTOM OF BODY
     # =====================================================
 
-    bottom_of_body = max(
-        la,
-        ra,
-        key=lambda p: p[1]
-    )
+    bottom_points = []
 
 
-    # =====================================================
-    # HEIGHT IN PIXELS
-    # =====================================================
+    # Ankles
 
-    height_pixels = distance(
-        top_of_head,
-        bottom_of_body
-    )
+    if visible(left_ankle):
 
-
-    # =====================================================
-    # WAIST ESTIMATION
-    # =====================================================
-
-    shoulder_y = (
-        ls[1] + rs[1]
-    ) / 2
+        bottom_points.append(
+            landmark_to_pixel(
+                left_ankle,
+                width,
+                height
+            )
+        )
 
 
-    hip_y = (
-        lh[1] + rh[1]
-    ) / 2
+    if visible(right_ankle):
+
+        bottom_points.append(
+            landmark_to_pixel(
+                right_ankle,
+                width,
+                height
+            )
+        )
 
 
-    waist_y = int(
-        shoulder_y * 0.45 +
-        hip_y * 0.55
-    )
+    # Heels
+
+    if visible(left_heel):
+
+        bottom_points.append(
+            landmark_to_pixel(
+                left_heel,
+                width,
+                height
+            )
+        )
 
 
-    # Approximate waist width
+    if visible(right_heel):
 
-    waist_pixels = (
-        shoulder_pixels * 0.35 +
-        hip_pixels * 0.65
-    )
+        bottom_points.append(
+            landmark_to_pixel(
+                right_heel,
+                width,
+                height
+            )
+        )
+
+
+    # Foot tips
+
+    if visible(left_foot):
+
+        bottom_points.append(
+            landmark_to_pixel(
+                left_foot,
+                width,
+                height
+            )
+        )
+
+
+    if visible(right_foot):
+
+        bottom_points.append(
+            landmark_to_pixel(
+                right_foot,
+                width,
+                height
+            )
+        )
+
+
+    # -----------------------------------------------------
+    # Calculate height
+    # -----------------------------------------------------
+
+    height_cm = None
+
+
+    if (
+        top_of_head is not None
+        and
+        len(bottom_points) > 0
+    ):
+
+        bottom_of_body = max(
+            bottom_points,
+            key=lambda p: p[1]
+        )
+
+
+        height_pixels = distance(
+            top_of_head,
+            bottom_of_body
+        )
+
+
+        height_cm = (
+            height_pixels *
+            cm_per_pixel
+        )
 
 
     # =====================================================
@@ -275,8 +544,22 @@ def measure_body(frame):
     # =====================================================
 
     return {
-        "height": round(height_pixels, 2),
-        "shoulder": round(shoulder_pixels, 2),
-        "waist": round(waist_pixels, 2),
-        "status": "Person detected"
+
+        "height_cm":
+            round(height_cm, 2)
+            if height_cm is not None
+            else None,
+
+        "shoulder_cm":
+            round(shoulder_cm, 2)
+            if shoulder_cm is not None
+            else None,
+
+        "hip_cm":
+            round(hip_cm, 2)
+            if hip_cm is not None
+            else None,
+
+        "status":
+            "Person detected"
     }
